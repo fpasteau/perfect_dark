@@ -83,7 +83,8 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+    //SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     if (sysArgCheck("--debug-gl")) {
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
     }
@@ -128,9 +129,9 @@ static void gfx_sdl_init(const struct GfxWindowInitSettings *set) {
     // if that doesn't work, try 3.2 core in case we're on mac, 2.1 compat as a last resort
     static u32 glver[][3] = {
         { 0, 0, 0                                    }, // for command line override
-        { 3, 0, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY },
-        { 3, 2, SDL_GL_CONTEXT_PROFILE_CORE },
-        { 2, 1, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY },
+        { 2, 0, SDL_GL_CONTEXT_PROFILE_ES },
+        { 2, 0, SDL_GL_CONTEXT_PROFILE_ES },
+        { 2, 0, SDL_GL_CONTEXT_PROFILE_ES },
     };
 
     u32 glcore = false;

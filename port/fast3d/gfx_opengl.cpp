@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+  
+#define USE_OPENGLES 1
 
 #include <map>
 #include <unordered_map>
@@ -14,8 +16,36 @@
 #endif
 #include <PR/gbi.h>
 
-#include "glad/glad.h"
+/*
+#ifdef __MINGW32__
+#define FOR_WINDOWS 1
+#else
+#define FOR_WINDOWS 0
+#endif
 
+#ifdef _MSC_VER
+#include <SDL2/SDL.h>
+// #define GL_GLEXT_PROTOTYPES 1
+#include <GL/glew.h>
+#elif FOR_WINDOWS
+#include <GL/glew.h>
+#include "SDL.h"
+#define GL_GLEXT_PROTOTYPES 1
+#include "SDL_opengl.h"
+#elif __APPLE__
+#include <SDL2/SDL.h>
+#include <GL/glew.h>
+#elif USE_OPENGLES
+#include <SDL2/SDL.h>
+#include <GLES3/gl3.h>
+#else
+#include <SDL2/SDL.h>
+#define GL_GLEXT_PROTOTYPES 1
+//#include <SDL2/SDL_opengl.h>
+#endif
+*/
+
+#include "glad/glad.h"
 #include "gfx_cc.h"
 #include "gfx_rendering_api.h"
 #include "gfx_pc.h"
@@ -42,6 +72,7 @@ struct Framebuffer {
 
     GLuint fbo, clrbuf, clrbuf_msaa, rbo;
 };
+#define GL_MIRROR_CLAMP_TO_EDGE 0x8743
 
 static std::map<pair<uint64_t, uint32_t>, struct ShaderProgram> shader_program_pool;
 static GLuint opengl_vbo;
@@ -234,8 +265,11 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     size_t num_floats = 4;
 
     // Vertex shader
-#ifdef __APPLE__
+#if defined(__APPLE__)
     append_line(vs_buf, &vs_len, "#version 410 core");
+    append_line(vs_buf, &vs_len, "in vec4 aVtxPos;");
+#elif defined(USE_OPENGLES)
+    append_line(vs_buf, &vs_len, "#version 300 es");
     append_line(vs_buf, &vs_len, "in vec4 aVtxPos;");
 #else
     append_line(vs_buf, &vs_len, "#version 110");
@@ -243,7 +277,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
 #endif
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
             vs_len += sprintf(vs_buf + vs_len, "in vec2 aTexCoord%d;\n", i);
             vs_len += sprintf(vs_buf + vs_len, "out vec2 vTexCoord%d;\n", i);
 #else
@@ -253,7 +287,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
             num_floats += 2;
             for (int j = 0; j < 2; j++) {
                 if (cc_features.clamp[i][j]) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
                     vs_len += sprintf(vs_buf + vs_len, "in float aTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
                     vs_len += sprintf(vs_buf + vs_len, "out float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
 #else
@@ -266,7 +300,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         }
     }
     if (cc_features.opt_fog) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(vs_buf, &vs_len, "in vec4 aFog;");
         append_line(vs_buf, &vs_len, "out vec4 vFog;");
 #else
@@ -277,7 +311,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     }
 
     if (cc_features.opt_grayscale) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(vs_buf, &vs_len, "in vec4 aGrayscaleColor;");
         append_line(vs_buf, &vs_len, "out vec4 vGrayscaleColor;");
 #else
@@ -288,7 +322,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
     }
 
     for (int i = 0; i < cc_features.num_inputs; i++) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         vs_len += sprintf(vs_buf + vs_len, "in vec%d aInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
         vs_len += sprintf(vs_buf + vs_len, "out vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
 #else
@@ -319,25 +353,31 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         vs_len += sprintf(vs_buf + vs_len, "vInput%d = aInput%d;\n", i + 1, i + 1);
     }
     append_line(vs_buf, &vs_len, "gl_Position = aVtxPos;");
+#if defined(USE_OPENGLES) // workaround for no GL_DEPTH_CLAMP
+    append_line(vs_buf, &vs_len, "gl_Position.z *= 0.3f;");
+#endif
     append_line(vs_buf, &vs_len, "}");
 
     // Fragment shader
-#ifdef __APPLE__
+#if defined(__APPLE__)
     append_line(fs_buf, &fs_len, "#version 410 core");
+#elif defined(USE_OPENGLES)
+    append_line(fs_buf, &fs_len, "#version 300 es");
+    append_line(fs_buf, &fs_len, "precision mediump float;");
 #else
     append_line(fs_buf, &fs_len, "#version 130");
 #endif
     // append_line(fs_buf, &fs_len, "precision mediump float;");
     for (int i = 0; i < 2; i++) {
         if (cc_features.used_textures[i]) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
             fs_len += sprintf(fs_buf + fs_len, "in vec2 vTexCoord%d;\n", i);
 #else
             fs_len += sprintf(fs_buf + fs_len, "varying vec2 vTexCoord%d;\n", i);
 #endif
             for (int j = 0; j < 2; j++) {
                 if (cc_features.clamp[i][j]) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
                     fs_len += sprintf(fs_buf + fs_len, "in float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
 #else
                     fs_len += sprintf(fs_buf + fs_len, "varying float vTexClamp%s%d;\n", j == 0 ? "S" : "T", i);
@@ -347,21 +387,21 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         }
     }
     if (cc_features.opt_fog) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(fs_buf, &fs_len, "in vec4 vFog;");
 #else
         append_line(fs_buf, &fs_len, "varying vec4 vFog;");
 #endif
     }
     if (cc_features.opt_grayscale) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(fs_buf, &fs_len, "in vec4 vGrayscaleColor;");
 #else
         append_line(fs_buf, &fs_len, "varying vec4 vGrayscaleColor;");
 #endif
     }
     for (int i = 0; i < cc_features.num_inputs; i++) {
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         fs_len += sprintf(fs_buf + fs_len, "in vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
 #else
         fs_len += sprintf(fs_buf + fs_len, "varying vec%d vInput%d;\n", cc_features.opt_alpha ? 4 : 3, i + 1);
@@ -391,14 +431,20 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
                 lowp vec4 cw = vec4(0.0);
                 for (int i = 0; i < 16; ++i) {
                     vec2 xy = vec2(float(i & 3), float(i >> 2));
-                    lowp float w = 0.009947 - length(xy) * 0.001;
-                    cw += vec4(texture2D(t, uv + (vec2(-1.5) + xy) / tsize).rgb * w, w);
-                }
+                    lowp float w = 0.009947 - length(xy) * 0.001;)"
+        );
+#if defined(__APPLE__) || defined(USE_OPENGLES)
+            append_line(fs_buf, &fs_len, "        cw += vec4(texture(t, uv + (vec2(-1.5) + xy) / tsize).rgb * w, w);");
+#else
+            append_line(fs_buf, &fs_len, "        cw += vec4(texture2D(t, uv + (vec2(-1.5) + xy) / tsize).rgb * w, w);");
+#endif
+
+            append_line(fs_buf, &fs_len, R"(}
                 return vec4(cw.rgb / cw.a, 1.0);
             })"
         );
     } else if (current_filter_mode == FILTER_THREE_POINT) {
-#if __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(fs_buf, &fs_len, "#define TEX_OFFSET(off) texture(tex, texCoord - (off)/texSize)");
 #else
         append_line(fs_buf, &fs_len, "#define TEX_OFFSET(off) texture2D(tex, texCoord - (off)/texSize)");
@@ -416,7 +462,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(fs_buf, &fs_len, "}");
     } else {
         append_line(fs_buf, &fs_len, "vec4 hookTexture2D(in sampler2D tex, in vec2 uv, in vec2 texSize) {");
-#if __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(fs_buf, &fs_len, "    return texture(tex, uv);");
 #else
         append_line(fs_buf, &fs_len, "    return texture2D(tex, uv);");
@@ -424,7 +470,7 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         append_line(fs_buf, &fs_len, "}");
     }
 
-#if __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
     append_line(fs_buf, &fs_len, "out vec4 outColor;");
 #endif
 
@@ -438,7 +484,11 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         if (cc_features.used_textures[i]) {
             bool s = cc_features.clamp[i][0], t = cc_features.clamp[i][1];
 
+#if defined(USE_OPENGLES)
+            fs_len += sprintf(fs_buf + fs_len, "vec2 texSize%d = vec2(textureSize(uTex%d, 0));\n", i, i);
+#else
             fs_len += sprintf(fs_buf + fs_len, "vec2 texSize%d = textureSize(uTex%d, 0);\n", i, i);
+#endif
 
             if (!s && !t) {
                 fs_len += sprintf(fs_buf + fs_len, "vec2 vTexCoordAdj%d = vTexCoord%d;\n", i, i);
@@ -522,13 +572,13 @@ static struct ShaderProgram* gfx_opengl_create_and_load_new_shader(uint64_t shad
         if (cc_features.opt_invisible) {
             append_line(fs_buf, &fs_len, "texel.a = 0.0;");
         }
-#if __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(fs_buf, &fs_len, "outColor = texel;");
 #else
         append_line(fs_buf, &fs_len, "gl_FragColor = texel;");
 #endif
     } else {
-#if __APPLE__
+#if defined(__APPLE__) || defined(USE_OPENGLES)
         append_line(fs_buf, &fs_len, "outColor = vec4(texel, 1.0);");
 #else
         append_line(fs_buf, &fs_len, "gl_FragColor = vec4(texel, 1.0);");
@@ -676,6 +726,7 @@ static void gfx_opengl_upload_texture(const uint8_t* rgba32_buf, uint32_t width,
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba32_buf);
 }
 
+
 static uint32_t gfx_cm_to_opengl(uint32_t val) {
     switch (val) {
         case G_TX_NOMIRROR | G_TX_CLAMP:
@@ -683,7 +734,7 @@ static uint32_t gfx_cm_to_opengl(uint32_t val) {
         case G_TX_MIRROR | G_TX_WRAP:
             return GL_MIRRORED_REPEAT;
         case G_TX_MIRROR | G_TX_CLAMP:
-            return gl_mirror_clamp;
+            return GL_MIRROR_CLAMP_TO_EDGE;
         case G_TX_NOMIRROR | G_TX_WRAP:
             return GL_REPEAT;
     }
@@ -711,7 +762,7 @@ static void gfx_opengl_set_depth_test_and_mask(bool depth_test, bool z_upd) {
 }
 
 static void gfx_opengl_set_depth_range(float znear, float zfar) {
-    glDepthRange(znear, zfar);
+    glDepthRangef(znear, zfar);
 }
 
 static void gfx_opengl_set_zmode_decal(bool zmode_decal) {
@@ -751,7 +802,7 @@ static void gfx_opengl_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_
     glDrawArrays(GL_TRIANGLES, 0, 3 * buf_vbo_num_tris);
 }
 
-typedef void (APIENTRY *DEBUGPROC)(GLenum source,
+/*typedef void (APIENTRY *DEBUGPROC)(GLenum source,
     GLenum type,
     GLuint id,
     GLenum severity,
@@ -761,24 +812,24 @@ typedef void (APIENTRY *DEBUGPROC)(GLenum source,
 
 static void APIENTRY gl_debug(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *msg, const void *p) {
     sysLogPrintf(LOG_WARNING, "GL: (%05x) %s", id, msg);
-}
+}*/
 
 static void gfx_opengl_enable_debug(void) {
-    if (GLAD_GL_KHR_debug) {
-        glEnable(GL_DEBUG_OUTPUT);
-    }
-    if (glDebugMessageControl != NULL) {
-        // enable everything except some specific spam messages
-        const GLuint disable[] = {
-            0x20061, /* "Framebuffer detailed info" */
-            0x20071  /* "Buffer detailed info" */
-        };
-        glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE);
-        glDebugMessageControl(GL_DEBUG_SOURCE_API, GL_DEBUG_TYPE_OTHER, GL_DONT_CARE, 2, disable, GL_FALSE);
-    }
-    if (glDebugMessageCallback != NULL) {
-        glDebugMessageCallback(gl_debug, NULL);
-    }
+//    if (GLAD_GL_KHR_debug) {
+//        glEnable(GL_DEBUG_OUTPUT);
+//    }
+//    if (glDebugMessageControl != NULL) {
+//        // enable everything except some specific spam messages
+//        const GLuint disable[] = {
+//            0x20061, /* "Framebuffer detailed info" */
+//            0x20071  /* "Buffer detailed info" */
+//        };
+//        glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE);
+//        glDebugMessageControl(GL_DEBUG_SOURCE_API, GL_DEBUG_TYPE_OTHER, GL_DONT_CARE, 2, disable, GL_FALSE);
+//    }
+//    if (glDebugMessageCallback != NULL) {
+//        glDebugMessageCallback(gl_debug, NULL);
+//    }
 }
 
 static bool gfx_opengl_supports_framebuffers(void) {
@@ -786,7 +837,7 @@ static bool gfx_opengl_supports_framebuffers(void) {
         // GL3.0+ supports everything we need, but we'll still check it for sanity
         return (glad_glFramebufferRenderbuffer && glad_glBlitFramebuffer && glad_glRenderbufferStorageMultisample);
     }
-    if (GLAD_GL_ARB_framebuffer_object) {
+   /* if (GLAD_GL_ARB_framebuffer_object) {
         // some implementations might be missing these
         return (glad_glBlitFramebuffer && glad_glRenderbufferStorageMultisample);
     }
@@ -805,7 +856,7 @@ static bool gfx_opengl_supports_framebuffers(void) {
         glad_glBlitFramebuffer = glad_glBlitFramebufferEXT;
         // sanity check
         return (glad_glFramebufferRenderbuffer && glad_glBlitFramebuffer && glad_glRenderbufferStorageMultisample);
-    }
+    }*/
     // nothing
     return false;
 }
@@ -828,7 +879,7 @@ static bool gfx_opengl_supports_shaders(void) {
     }
 
     // check for extension that adds textureSize
-    return GLAD_GL_EXT_gpu_shader4;
+    return GLAD_GL_EXT_gpu_shader5;
 }
 
 static void gfx_opengl_log_info(void) {
@@ -841,9 +892,13 @@ static void gfx_opengl_log_info(void) {
     sysLogPrintf(LOG_NOTE, "GL: renderer: %s", renderer ? renderer : "unknown");
     sysLogPrintf(LOG_NOTE, "GL: GLSL version: %s", glsl_version ? glsl_version : "unknown");
     sysLogPrintf(LOG_NOTE, "GL: ARB_framebuffer_object: %s", gfx_opengl_supports_framebuffers() ? "yes" : "no");
+#ifndef USE_OPENGLES // not supported on gles
     sysLogPrintf(LOG_NOTE, "GL: ARB_depth_clamp: %s", GLAD_GL_ARB_depth_clamp ? "yes" : "no");
     sysLogPrintf(LOG_NOTE, "GL: ARB_texture_mirror_clamp_to_edge: %s", GLAD_GL_ARB_texture_mirror_clamp_to_edge ? "yes" : "no");
+    #endif
 }
+
+
 
 static void *gl_load_proc(const char *name) {
     void *ret = SDL_GL_GetProcAddress(name);
@@ -868,7 +923,8 @@ static void *gl_load_proc(const char *name) {
 }
 
 static void gfx_opengl_init(void) {
-    if (!gladLoadGLLoader(gl_load_proc) || glGetString == NULL || glEnable == NULL) {
+
+    if (!gladLoadGLES2Loader(gl_load_proc) || glGetString == NULL || glEnable == NULL) {
         sysFatalError("Could not load OpenGL.\nReported SDL error: %s", SDL_GetError());
     }
 
@@ -896,7 +952,7 @@ static void gfx_opengl_init(void) {
         gfx_framebuffers_enabled = false;
     }
 
-    if ((GLVersion.major < 4 || GLVersion.minor < 4) && !GLAD_GL_ARB_texture_mirror_clamp_to_edge) {
+    if ((GLVersion.major < 4 || GLVersion.minor < 4)) {
         // GL_MIRROR_CLAMP_TO_EDGE unsupported
         gl_mirror_clamp = GL_MIRRORED_REPEAT;
     }
@@ -918,10 +974,11 @@ static void gfx_opengl_init(void) {
         glGenVertexArrays(1, &opengl_vao);
         glBindVertexArray(opengl_vao);
     }
-
+#ifndef USE_OPENGLES // not supported on gles
     if (GLAD_GL_ARB_depth_clamp) {
         glEnable(GL_DEPTH_CLAMP);
     }
+#endif
     glDepthFunc(GL_LEQUAL);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
